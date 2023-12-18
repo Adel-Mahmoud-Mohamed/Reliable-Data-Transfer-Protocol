@@ -134,6 +134,7 @@ void sendAck(int sockfd, struct ack_packet *ack, struct sockaddr *sockaddr) {
 
 
 
+// --------------------------Here's the main function----------------------------------------------------------------
 int main(int argc, char *argv[]) {
     
     if (argc <= 3) {
