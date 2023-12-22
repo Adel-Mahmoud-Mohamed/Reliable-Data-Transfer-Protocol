@@ -8,18 +8,19 @@
 
 #include "packet.hpp"
 
-class PacketBuilder {
+class PacketBuilder
+{
     struct packet *current_packet = NULL;
-    
-    public:
-        struct packet *build();
-        struct ack_packet *getAckPacket(int ackno);
 
-        PacketBuilder *addData(const char *, int len);
-        PacketBuilder *initPacket(int seq);
-        PacketBuilder *markAsFIN();
-        PacketBuilder *markAsSYN();
-        PacketBuilder *calculateChecksum();
+public:
+    struct packet *build();
+    struct ack_packet *getAckPacket(int ackno);
+
+    PacketBuilder *addDataToPacket(const char *, int len);
+    PacketBuilder *initPacket(int seq);
+    PacketBuilder *markAsFIN();
+    PacketBuilder *markAsSYN();
+    PacketBuilder *calculateChecksum();
 };
 
-#endif 
+#endif

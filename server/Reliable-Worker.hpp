@@ -14,7 +14,7 @@ class Reliable_Worker
 {
 public:
     Reliable_Worker(unsigned int seed, double PLP);
-    void handle(const struct packet *, struct sockaddr *);
+    void handleRequest(const struct packet *, struct sockaddr *);
 
 private:
     void recvAck(uint32_t seqno);
@@ -25,19 +25,19 @@ private:
     void sendFileInPackets(const char url[]);
 
     void reset_timer();
-    void handleDubAcks();
+    void handleDupAck();
     void handleTimeOut();
 
     void logInfo();
 
-    // congestion control.
+    // congestion control variables.
     std::deque<struct packet *> window;          // The sending window as a queue of packets
-    uint32_t dubACKCount = 0;                    // Counter for duplicate acks
+    uint32_t dupAckCount = 0;                    // Counter for duplicate acks
     std::chrono::steady_clock::time_point timer; // For tracking the timeouts
     bool fast_recovery = false;                  // Boolean flag indicating whether the sender is in fast recovery mode.
     const uint32_t MSS = 512;                    // Boolean flag indicating whether the sender is in fast recovery mode (initially = 512 bytes)
     uint32_t ssthreshold = 64000;                // The slow start threshold (initially 64 k)
-    uint32_t windowSize = 512;                   // The current size of cwnd
+    uint32_t cwnd = 512;                         // The current size of cwnd
     const uint32_t timeout = 1;                  // timeout in seconds.
 
     // prob to loss

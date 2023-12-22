@@ -107,33 +107,33 @@ void Reliable_Worker::reset_timer()
 
 void Reliable_Worker::logInfo()
 {
-    log << this->windowSize << '\n';
+    log << this->cwnd << '\n';
 }
 
 // Function to handle the duplicate acks recived and if they're three dup then we'll
 // Go to the faseRecovery mode
-void Reliable_Worker::handleDubAcks()
+void Reliable_Worker::handleDupAck()
 {
     // Increment the count of duplicate acknowledgments
-    this->dubACKCount++;
+    this->dupAckCount++;
 
     // Check if the count of duplicate acknowledgments is greater than or equal to 3
-    if (this->dubACKCount >= 3)
+    if (this->dupAckCount >= 3)
     {
         // Check if the sender is already in fast recovery mode
         if (this->fast_recovery)
         {
             // If in fast recovery mode, increase the window size by MSS (Maximum Segment Size)
-            this->windowSize += this->MSS;
+            this->cwnd += this->MSS;
         }
         else
         {
             // If not in fast recovery mode
             // Set slow-start threshold to half of the current window size
-            this->ssthreshold = this->windowSize / 2;
+            this->ssthreshold = this->cwnd / 2;
 
             // Set the window size to the slow-start threshold plus 3 times MSS
-            this->windowSize = this->ssthreshold + 3 * this->MSS;
+            this->cwnd = this->ssthreshold + 3 * this->MSS;
 
             // Enable fast recovery mode
             this->fast_recovery = true;
@@ -162,14 +162,14 @@ void Reliable_Worker::handleTimeOut()
 
     // Reset variables related to congestion control and recovery
     this->fast_recovery = false;
-    this->dubACKCount = 0;
-    this->ssthreshold = this->windowSize / 2;
-    this->windowSize = this->MSS;
+    this->dupAckCount = 0;
+    this->ssthreshold = this->cwnd / 2;
+    this->cwnd = this->MSS;
 }
 
 void Reliable_Worker::sendPacket(const char data[], uint32_t seqno, int len, bool isFIN)
 {
-    PacketBuilder *packetBuilder = this->pcktBuilder.initPacket(seqno)->addData(data, len);
+    PacketBuilder *packetBuilder = this->pcktBuilder.initPacket(seqno)->addDataToPacket(data, len);
     if (isFIN)
     {
         packetBuilder->markAsFIN();
@@ -182,6 +182,7 @@ void Reliable_Worker::sendPacket(struct packet *packet, bool addToWindow, int le
     // If addToWindow is true, add the packet to the window and start the timer if the window is empty
     if (addToWindow)
     {
+        // If it's the first unack packet (first packet in the window)then reset the timer
         if (this->window.size() == 0)
         {
             // Start the timer
@@ -198,16 +199,20 @@ void Reliable_Worker::sendPacket(struct packet *packet, bool addToWindow, int le
         if (sendto(sockfd, packet, len, 0, sockaddr, sizeof(*sockaddr)) == -1)
         {
             // Error handling in case of failure to send the packet
-            std::cerr << "Server: Error with sending the packet";
+            std::cerr << "Server: Error with sending the data packet";
             exit(1);
         }
     }
 }
 
+/**
+ * @brief Function that recieves an ack for the base and if it's a duplicate ack then call the method that handles this, and if a timeout has occured while waiting then calls the handleTimeout function
+ * @param seqno which is the seq number of the packet to be ack
+ */
 void Reliable_Worker::recvAck(uint32_t seqno)
 {
     struct ack_packet ack_packet;
-    int numOfBytesReceived = 0;
+    int bytesRecvd = 0;
     struct sockaddr_storage outside_sockets;
     socklen_t size = sizeof(outside_sockets);
 
@@ -215,17 +220,18 @@ void Reliable_Worker::recvAck(uint32_t seqno)
 
     if (!this->window.empty())
     {
-        // that should be followed.
+        // We only wait for ack for the base
         if (seqno != this->base)
             exit(1);
     }
 
-    std::cout << "Trying to receive an ack for " << seqno << " with window size : " << this->windowSize << " and threshold : " << this->ssthreshold << '\n';
+    std::cout << "Trying to receive an ack for " << seqno << " with window size : " << this->cwnd << " and threshold : " << this->ssthreshold << '\n';
     std::cout << "Current not-acked packets are : " << this->window.size() << '\n';
+
     while (std::chrono::steady_clock::now() < this->timer)
     {
-        numOfBytesReceived = recvfrom(sockfd, &ack_packet, sizeof(struct ack_packet), 0, (struct sockaddr *)&outside_sockets, &size);
-        if (numOfBytesReceived > 0)
+        bytesRecvd = recvfrom(sockfd, &ack_packet, sizeof(struct ack_packet), 0, (struct sockaddr *)&outside_sockets, &size);
+        if (bytesRecvd > 0)
         {
             time_out = false;
             break;
@@ -236,53 +242,62 @@ void Reliable_Worker::recvAck(uint32_t seqno)
     {
         std::cout << "Timeout!!, let's resend missing packet again" << '\n';
         handleTimeOut();
-        std::cout << "new window size : " << this->windowSize << " new threshold : " << this->ssthreshold << "\n\n";
+        std::cout << "new window size : " << this->cwnd << " new threshold : " << this->ssthreshold << "\n\n";
         logInfo();
         return;
     }
 
     // Here means that no timeout has occured and we've recieved an ack
-    std::cout << numOfBytesReceived << " with ack: " << ack_packet.ackno << " and was lookign for: " << seqno << '\n';
+    std::cout << bytesRecvd << " with ack: " << ack_packet.ackno << " and was lookign for: " << seqno << '\n';
 
     // to handle wrapping around.
     if ((uint32_t)(ack_packet.ackno - seqno) >= 0x80000000)
     {
         // Means that we've got a duplicate ack let's handle it
-        this->handleDubAcks();
+        this->handleDupAck();
     }
     else
     {
-        // It's not a duplicate ack
-        this->dubACKCount = 0;
+        // It's not a duplicate ack (applicable for all the states)
+        this->dupAckCount = 0;
+
         // Then we need to check which mood we're in
         if (this->fast_recovery)
         {
             // This means that we're in the fast recovery mode
-            this->windowSize = this->ssthreshold;
+            this->cwnd = this->ssthreshold;
             this->fast_recovery = false;
         }
+
         else
         {
 
-            if (this->windowSize >= this->ssthreshold)
+            if (this->cwnd >= this->ssthreshold)
             {
                 // This means that we're in the congestion avoidence mode
-                this->windowSize += this->MSS * (this->MSS / (double)this->windowSize);
+                this->cwnd += this->MSS * (this->MSS / (double)this->cwnd);
             }
             else
             {
                 // If not in the CA nor the fast recovery then we must be in the slow start mode
-                this->windowSize += this->MSS;
+                this->cwnd += this->MSS;
             }
         }
 
         // Let's adjust our window
         while (!this->window.empty() && (uint32_t)(ack_packet.ackno - this->window.front()->seqno) < 0x80000000)
         {
+            // adjust the base as window.fornt + the size of the data of the front (the new base)
             this->base = this->window.front()->seqno + this->window.front()->len;
+
+            // The we free up the front packet
             free(this->window.front());
+
+            // And then we pop it out of the window queue
             this->window.pop_front();
         }
+
+        // Then we reset the timer because we have a new base to be acknowleged
         this->reset_timer();
     }
 
@@ -295,46 +310,62 @@ void Reliable_Worker::sendFileInPackets(const char url[])
 
     // read the file as a stream of binary data.
     std::ifstream file(url, std::ifstream::binary);
+
+    // Get the length of the file
     int len = getFileSize(std::string(url));
 
     // check the existence of the file.
     if (file.fail())
     {
-        std::cout << "no such a file\n";
+        std::cout << "File doesn't exist at the server size\n";
         exit(1);
     }
 
+    // Here we set the size of the buffer to 1 MSS
     const unsigned int BUFFER_SIZE = this->MSS;
-    char buff[BUFFER_SIZE] = {0};
+
+    char buff[BUFFER_SIZE];
+
+    memset(buff, 0, sizeof buff);
 
     while (file)
     {
-        while ((this->base + this->windowSize > this->nextSeqNumber && this->base + this->windowSize - this->nextSeqNumber >= BUFFER_SIZE) ||
-               (len <= BUFFER_SIZE && len <= this->base + this->windowSize - this->nextSeqNumber))
+        // this->base + this->cwnd > this->nextSeqNumber  means that the next seq number is within the window
+        // this->base + this->cwnd - this->nextSeqNumber >= BUFFER_SIZE this ensures that the reciever is not flooded
+        // len <= this->base + this->cwnd - this->nextSeqNumber this ensures that the remaining size of the file fits within the
+        // congestion window size
+        while ((this->base + this->cwnd > this->nextSeqNumber && this->base + this->cwnd - this->nextSeqNumber >= BUFFER_SIZE) ||
+               (len <= BUFFER_SIZE && len <= this->base + this->cwnd - this->nextSeqNumber))
         {
-            // determine the payload size
-            int payloadSize = std::min(BUFFER_SIZE, this->base + this->windowSize - this->nextSeqNumber);
+            // determine the payload size by getting the min between the available bufferSize, and the
+            // available packets in the window
+            int payloadSize = std::min(BUFFER_SIZE, this->base + this->cwnd - this->nextSeqNumber);
 
             file.read(buff, payloadSize);
+
             size_t count = file.gcount();
 
             // no bytes left
             if (!count)
                 break;
+
             len -= count;
 
             // send the packet.
             std::cout << "Sending the packet " << this->nextSeqNumber << " with " << count << " bytes" << '\n';
+
+            // Send the packet that has buff as the payload and count as the number of bytes recieved
             this->sendPacket(buff, this->nextSeqNumber, count, len == 0);
             this->nextSeqNumber += count;
         }
+        // send untill there's not available space in the window then wait for ack to give more space
         this->recvAck(this->base);
     }
     file.close();
 }
 
 // This is the constructor for our class it initializes the log file named data2.txt for logging out info
-Reliable_Worker::Reliable_Worker(unsigned int seed, double PLP) : log("data2.txt", std::ios::out)
+Reliable_Worker::Reliable_Worker(unsigned int seed, double PLP) : log("logFile.txt", std::ios::out)
 {
     this->base = this->nextSeqNumber = 1;
     this->fast_recovery = false;
@@ -342,17 +373,21 @@ Reliable_Worker::Reliable_Worker(unsigned int seed, double PLP) : log("data2.txt
     srand(seed);
 }
 
-void Reliable_Worker::handle(const struct packet *packet, struct sockaddr *sockaddr)
+void Reliable_Worker::handleRequest(const struct packet *packet, struct sockaddr *sockaddr)
 {
 
     // getting host and port.
     char ips[INET6_ADDRSTRLEN];
+    // Convert the binary address to a human readable format
     const char *host = inet_ntop(sockaddr->sa_family, get_in_addr(sockaddr), ips, sizeof ips);
     char port[16];
     sprintf(port, "%u", get_in_port(sockaddr));
+
+    // Log the packet into in our log file
     std::cout << "LOG: "
               << "GOT " << packet->data << packet->seqno << packet->len << '\n';
 
+    // Build a socket and bind it to our port
     this->sockfd = setup_socket(host, port);
     this->sockaddr = sockaddr;
 
@@ -360,13 +395,17 @@ void Reliable_Worker::handle(const struct packet *packet, struct sockaddr *socka
     struct timeval socket_timeout;
     socket_timeout.tv_sec = 0;
     socket_timeout.tv_usec = 10;
+
+    // Set a timeout for the socket so as not to wait indifinately
     setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &socket_timeout, sizeof socket_timeout);
 
     this->sendFileInPackets(packet->data);
 
     while (!this->window.empty())
         this->recvAck(this->base);
+
+    // at the send we close the log file
     this->log.close();
-    std::cout << "Sending the file is completed!!!!\n";
+    std::cout << "Sending the file is done successfully !\n";
     return;
 }
