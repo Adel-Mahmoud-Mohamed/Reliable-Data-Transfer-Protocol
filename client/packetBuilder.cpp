@@ -2,6 +2,17 @@
 #include "packetBuilder.hpp"
 
 
+/*
+    * PacketBuilder
+    *  - build() : returns the packet and resets the builder.
+    *  - initPacket(int seq) : initializes a packet with the given sequence number.
+    *  - addData(const char *data, int len) : adds data to the packet.
+    *  - markAsFIN() : marks the packet as a FIN packet.
+    *  - markAsSYN() : marks the packet as a SYN packet.
+    *  - calculateChecksum() : calculates the checksum of the packet.
+*/
+
+
 
 struct packet *PacketBuilder::build() {
     struct packet *temp = this->current_packet;

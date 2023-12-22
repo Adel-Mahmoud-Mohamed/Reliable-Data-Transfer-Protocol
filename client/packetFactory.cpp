@@ -3,6 +3,11 @@
 #include <string.h>
 #include "packet.hpp"
 
+/*
+    * make_packet(int seq, char *data, int len)
+    *   - returns a packet with the given sequence number, data, and length.
+    *   - checksum is calculated automatically.
+*/
 
 struct packet* make_packet(int seq, char* data, int len) {
     

@@ -1,4 +1,3 @@
-
 #include <stdio.h>
 #include <iostream>
 #include <fstream>
@@ -52,7 +51,7 @@ int main(int argc, char *argv[]) {
     ssize_t numOfBytesReceived = -1;
 
 
-    std::map<uint32_t, std::pair<std::string, u_int16_t>> cache;
+    std::map<uint32_t, std::pair<std::string, u_int16_t>> cache;    // buffer for out-of-order packets.
     PacketBuilder packetBuilder;
 
     if (argc != 3) {
@@ -63,8 +62,8 @@ int main(int argc, char *argv[]) {
     // setting hints to zero
     memset(&hints, 0, sizeof hints);
 
-    hints.ai_family = AF_UNSPEC;   // we can use either IPv4 or IPv6
-    hints.ai_socktype = SOCK_DGRAM; // UDP used.
+    hints.ai_family = AF_UNSPEC;        // we can use either IPv4 or IPv6
+    hints.ai_socktype = SOCK_DGRAM;     // UDP used.
     hints.ai_protocol = IPPROTO_UDP;
 
 
@@ -73,6 +72,7 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
 
+    // loop through all the results and make a socket
     for (servinfo = root; servinfo != NULL; servinfo = root->ai_next) {
         if ((sockfd = socket(servinfo->ai_family, servinfo->ai_socktype, servinfo->ai_protocol)) < 0) {
             perror("server: socket");
@@ -110,13 +110,13 @@ int main(int argc, char *argv[]) {
     }
 
     std::cout << "LOG: Client: Got ack and getting ready to receive the file.\n";
-    uint32_t expectedSeq = 1;
-    ack = packetBuilder.getAckPacket(0);
+    uint32_t expectedSeq = 1;   // expected sequence number.
+    ack = packetBuilder.getAckPacket(0);    // ack for the first packet.
 
-    std::ofstream out(argv[2], std::ifstream::binary);
+    std::ofstream out(argv[2], std::ifstream::binary);  // output file stream.
     int noResponse = 100;
 
-    std::pair<uint32_t, bool> isFin = std::make_pair(-1, false);
+    std::pair<uint32_t, bool> isFin = std::make_pair(-1, false);    // isFin.first is the seqno of the fin packet, isFin.second is true if we got the fin packet.
 
     while (noResponse >= 0 && (!isFin.second || isFin.first > expectedSeq)) {
         std::cout << "Waiting for the next packet!!\n";
@@ -144,7 +144,7 @@ int main(int argc, char *argv[]) {
                 isFin = std::make_pair(pckt->seqno, true);
             }
 
-        } else if (pckt->seqno == expectedSeq) { 
+        } else if (pckt->seqno == expectedSeq) {    // got the expected packet.
             
             free(ack);
             std::cout << "Got " << pckt->seqno << '\n';
@@ -157,9 +157,9 @@ int main(int argc, char *argv[]) {
                 isFin = std::make_pair(pckt->seqno, true);
             }
 
-            while (cache.count(expectedSeq) != 0) {
-                std::pair<std::string, uint16_t> cachedPacket = cache[expectedSeq];
-                cache.erase(expectedSeq);
+            while (cache.count(expectedSeq) != 0) {   // check if we have the next packet in the buffer.
+                std::pair<std::string, uint16_t> cachedPacket = cache[expectedSeq]; // get the packet from the buffer.
+                cache.erase(expectedSeq);   // remove the packet from the buffer.
                 out.write(cachedPacket.first.c_str(), cachedPacket.second);
                 std::cout << "Buffer is used : from : " << expectedSeq << " to : " << expectedSeq + cachedPacket.second << '\n';
                 expectedSeq += cachedPacket.second;
